@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>人脸识别 Agent · 入口</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", Segoe UI, Roboto, sans-serif;
+    background: linear-gradient(135deg, #1e3c72, #2a5298); color: #fff; padding: 24px;
+  }
+  .card {
+    background: rgba(255,255,255,.12); backdrop-filter: blur(6px);
+    border: 1px solid rgba(255,255,255,.25); border-radius: 16px;
+    padding: 28px 26px; max-width: 440px; width: 100%; text-align: center;
+    box-shadow: 0 10px 40px rgba(0,0,0,.25);
+  }
+  h1 { font-size: 20px; margin: 0 0 6px; }
+  .sub { font-size: 14px; opacity: .85; margin: 0 0 18px; line-height: 1.6; }
+  .status { font-size: 15px; margin: 14px 0; min-height: 22px; line-height: 1.5; }
+  .spinner {
+    width: 26px; height: 26px; border: 3px solid rgba(255,255,255,.35);
+    border-top-color: #fff; border-radius: 50%; display: inline-block;
+    animation: spin .8s linear infinite; vertical-align: middle; margin-right: 8px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  a.btn {
+    display: inline-block; margin-top: 8px; padding: 12px 18px; border-radius: 10px;
+    background: #fff; color: #1e3c72; text-decoration: none; font-weight: 600; font-size: 16px;
+  }
+  .url { font-size: 13px; word-break: break-all; opacity: .85; margin-top: 14px; line-height: 1.5; }
+  .err { color: #ffd2d2; font-size: 14px; line-height: 1.6; }
+  .manual {
+    margin-top: 18px; padding-top: 16px; border-top: 1px dashed rgba(255,255,255,.3);
+    text-align: left;
+  }
+  .manual p { font-size: 13px; opacity: .9; margin: 0 0 10px; line-height: 1.6; }
+  .manual input {
+    width: 100%; padding: 11px 12px; border-radius: 9px; border: none;
+    font-size: 15px; color: #1e3c72; margin-bottom: 10px;
+  }
+  .manual button {
+    width: 100%; padding: 12px; border-radius: 9px; border: none;
+    background: #ffd166; color: #1e3c72; font-weight: 700; font-size: 16px; cursor: pointer;
+  }
+  .hint { font-size: 12px; opacity: .75; margin-top: 10px; line-height: 1.5; }
+  .ok { color: #c8f7c5; font-size: 14px; }
+  .warn { color: #ffe08a; font-size: 14px; line-height: 1.6; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>👮 人脸识别 Agent</h1>
+    <p class="sub">正在跳转到最新访问地址…<br/>（cpolar 地址会变化，本页自动跟随）</p>
+    <div class="status" id="status"><span class="spinner"></span>读取最新地址中…</div>
+    <a class="btn" id="manualLink" style="display:none">手动打开</a>
+    <div class="url" id="urlText"></div>
+
+    <!-- 兜底：取不到 latest.json 时，手动填入当前 cpolar 地址（存本机，重启后只需贴一次） -->
+    <div class="manual" id="manualBox" style="display:none">
+      <p>⚠️ 自动获取失败，可手动填写当前访问地址后前往（会自动记住）：</p>
+      <input id="manualInput" type="text" inputmode="url" placeholder="https://xxxx.r12.cpolar.top" />
+      <button id="goBtn">前往并记住</button>
+      <div class="hint" id="manualHint"></div>
+    </div>
+  </div>
+
+<script>
+  var CHECK_INTERVAL = 60000;
+  var lastUrl = "";
+  var LS_KEY = "cpolar_manual_url";
+
+  function go(url) {
+    if (!url) return false;
+    if (url === lastUrl) return true;
+    if (location.href.indexOf(url) === 0) { lastUrl = url; return true; }
+    lastUrl = url;
+    location.replace(url);
+    return true;
+  }
+
+  function showStatus(html) { document.getElementById("status").innerHTML = html; }
+
+  function showError(msg, showManual) {
+    showStatus('<span class="err">⚠️ ' + msg + '</span>');
+    if (showManual) document.getElementById("manualBox").style.display = "block";
+  }
+
+  function setupManual() {
+    var saved = "";
+    try { saved = localStorage.getItem(LS_KEY) || ""; } catch (e) {}
+    var input = document.getElementById("manualInput");
+    var hint = document.getElementById("manualHint");
+    if (saved) {
+      input.value = saved;
+      hint.innerHTML = '已记住上次的地址：<span class="ok">' + saved + '</span>（可直接点“前往”，或改成新地址）';
+    }
+    document.getElementById("goBtn").addEventListener("click", function () {
+      var v = input.value.trim();
+      if (!/^https?:\/\//.test(v)) {
+        hint.innerHTML = '<span class="err">请填写完整的 http(s) 地址</span>';
+        return;
+      }
+      try { localStorage.setItem(LS_KEY, v); } catch (e) {}
+      location.replace(v);
+    });
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") document.getElementById("goBtn").click();
+    });
+  }
+
+  function tick() {
+    // file:// 协议下浏览器禁止 fetch，直接提示需托管
+    if (location.protocol === "file:") {
+      showError("本页是通过本地文件直接打开的，浏览器禁止读取 latest.json。请改为通过 http(s) 链接访问（部署到 GitHub Pages，或用 relay_sync.py --serve 本地访问）。", true);
+      return;
+    }
+    fetch("latest.json?t=" + Date.now(), { cache: "no-store" })
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (d) {
+        var url = d && d.cpolar_url;
+        document.getElementById("urlText").textContent = url || "";
+        if (!url) { showError("未获取到地址，请稍后重试", true); return; }
+        if (go(url)) {
+          var a = document.getElementById("manualLink");
+          a.href = url; a.style.display = "inline-block";
+          showStatus('<span class="ok">已是最新地址 ✅</span>');
+        }
+      })
+      .catch(function (e) {
+        // 区分网络/跨域（Failed to fetch）与文件缺失（HTTP 404）
+        var msg = (e && e.message) ? e.message : "未知错误";
+        if (/Failed to fetch/i.test(msg)) {
+          showError("读取 latest.json 失败（网络/跨域）。若本页已部署在 GitHub Pages，请确认仓库里有 latest.json；否则用下方手动填写。", true);
+        } else {
+          showError("读取 latest.json 失败：" + msg + "（可能尚未部署 latest.json）", true);
+        }
+      });
+  }
+
+  setupManual();
+  tick();
+  setInterval(tick, CHECK_INTERVAL);
+</script>
+</body>
+</html>
