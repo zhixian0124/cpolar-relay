@@ -59,9 +59,9 @@
     <a class="btn" id="manualLink" style="display:none">手动打开</a>
     <div class="url" id="urlText"></div>
 
-    <!-- 兜底：取不到 latest.json 时，手动填入当前 cpolar 地址（存本机，重启后只需贴一次） -->
+    <!-- 兜底：取不到 latest.json 或目标地址不可达时，手动填入当前 cpolar 地址（存本机，重启后只需贴一次） -->
     <div class="manual" id="manualBox" style="display:none">
-      <p>⚠️ 自动获取失败，可手动填写当前访问地址后前往（会自动记住）：</p>
+      <p>⚠️ 自动跳转暂不可用，可手动填写当前访问地址后前往（会自动记住）：</p>
       <input id="manualInput" type="text" inputmode="url" placeholder="https://xxxx.r12.cpolar.top" />
       <button id="goBtn">前往并记住</button>
       <div class="hint" id="manualHint"></div>
@@ -69,18 +69,10 @@
   </div>
 
 <script>
-  var CHECK_INTERVAL = 60000;
+  var CHECK_INTERVAL = 60000;   // 每 60 秒自检
+  var PROBE_TIMEOUT = 8000;     // 目标地址探活超时
   var lastUrl = "";
   var LS_KEY = "cpolar_manual_url";
-
-  function go(url) {
-    if (!url) return false;
-    if (url === lastUrl) return true;
-    if (location.href.indexOf(url) === 0) { lastUrl = url; return true; }
-    lastUrl = url;
-    location.replace(url);
-    return true;
-  }
 
   function showStatus(html) { document.getElementById("status").innerHTML = html; }
 
@@ -112,8 +104,32 @@
     });
   }
 
+  // 目标地址是否活着：no-cors 探测（跨域拿不到状态码，但网络不通会 reject）
+  function reachable(url) {
+    var done = false;
+    return new Promise(function (resolve) {
+      var ctrl = (typeof AbortController !== "undefined") ? new AbortController() : null;
+      var timer = setTimeout(function () {
+        if (!done) { done = true; resolve(false); }
+        if (ctrl) { try { ctrl.abort(); } catch (e) {} }
+      }, PROBE_TIMEOUT);
+      var opts = { mode: "no-cors", cache: "no-store" };
+      if (ctrl) opts.signal = ctrl.signal;
+      fetch(url, opts).then(function () {
+        if (!done) { done = true; clearTimeout(timer); resolve(true); }
+      }).catch(function () {
+        if (!done) { done = true; clearTimeout(timer); resolve(false); }
+      });
+    });
+  }
+
+  function go(url) {
+    document.getElementById("urlText").textContent = url;
+    lastUrl = url;
+    location.replace(url);
+  }
+
   function tick() {
-    // file:// 协议下浏览器禁止 fetch，直接提示需托管
     if (location.protocol === "file:") {
       showError("本页是通过本地文件直接打开的，浏览器禁止读取 latest.json。请改为通过 http(s) 链接访问（部署到 GitHub Pages，或用 relay_sync.py --serve 本地访问）。", true);
       return;
@@ -125,16 +141,18 @@
       })
       .then(function (d) {
         var url = d && d.cpolar_url;
-        document.getElementById("urlText").textContent = url || "";
         if (!url) { showError("未获取到地址，请稍后重试", true); return; }
-        if (go(url)) {
+        // 先探活再跳，避免跳到已失效的地址
+        reachable(url).then(function (alive) {
+          if (alive) { go(url); return; }
           var a = document.getElementById("manualLink");
           a.href = url; a.style.display = "inline-block";
-          showStatus('<span class="ok">已是最新地址 ✅</span>');
-        }
+          var input = document.getElementById("manualInput");
+          if (!input.value) input.value = url; // 预填最新已知地址，便于直接重试或替换
+          showError("最新地址暂时无法访问（应用服务可能未启动，本页会每分钟自动重试）。也可点“手动打开”重试，或填入新地址。", true);
+        });
       })
       .catch(function (e) {
-        // 区分网络/跨域（Failed to fetch）与文件缺失（HTTP 404）
         var msg = (e && e.message) ? e.message : "未知错误";
         if (/Failed to fetch/i.test(msg)) {
           showError("读取 latest.json 失败（网络/跨域）。若本页已部署在 GitHub Pages，请确认仓库里有 latest.json；否则用下方手动填写。", true);
